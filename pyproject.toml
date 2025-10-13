@@ -44,7 +44,7 @@ classifiers = [
 
 [project.optional-dependencies]
 flyte = [
-    "flyte==2.0.0b17",
+    "flyte==2.0.0b24",
 ]
 ollama = [
     "ollama",

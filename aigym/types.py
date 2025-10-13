@@ -123,6 +123,7 @@ class Observation(BaseModel):
     chunk_names: list[str]
     next_url: str | None
     target_url: str
+    travel_path: list[str]
     current_chunk: int
     total_chunks: int
 

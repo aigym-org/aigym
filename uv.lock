@@ -44,7 +44,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "tiktoken" },
-    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -92,7 +91,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4" },
     { name = "bitsandbytes", marker = "extra == 'bitsandbytes'", specifier = ">=0.42.0" },
-    { name = "flyte", marker = "extra == 'flyte'", specifier = "==2.0.0b17" },
+    { name = "flyte", marker = "extra == 'flyte'", specifier = "==2.0.0b24" },
     { name = "google-genai", marker = "extra == 'google-genai'" },
     { name = "gymnasium" },
     { name = "html2text" },
@@ -111,7 +110,6 @@ requires-dist = [
     { name = "tiktoken" },
     { name = "torch", marker = "extra == 'transformers'", specifier = ">=2.7.0" },
     { name = "torch", marker = "extra == 'trl'", specifier = ">=2.7.0" },
-    { name = "tqdm" },
     { name = "transformers", marker = "extra == 'transformers'" },
     { name = "trl", marker = "extra == 'trl'" },
     { name = "wandb", marker = "extra == 'wandb'" },
@@ -229,6 +227,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/61/f9/58b3ce002d1b0b3630ccd02ecbfc6932d00242eb40182e76a65ddbf6ec26/aiohttp-3.12.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:c20421e165410bb632f64c5693b1f69e6911dbde197fa0dcd3a0c65d505f776b", size = 1701004, upload-time = "2025-05-29T01:36:11.692Z" },
     { url = "https://files.pythonhosted.org/packages/ee/7c/c1a5e7704fef91f115bd399e47b9613cf11c8caec041a326e966f190c994/aiohttp-3.12.4-cp313-cp313-win32.whl", hash = "sha256:834a2f08eb800af07066af9f26eda4c2d6f7fe0737a3c0aef448f1ba8132fed9", size = 413468, upload-time = "2025-05-29T01:36:13.876Z" },
     { url = "https://files.pythonhosted.org/packages/65/31/e252246332a12abf17f66c8f8360730a5a3a1dd354ca48ccfb90bbb122db/aiohttp-3.12.4-cp313-cp313-win_amd64.whl", hash = "sha256:4c78018c4e8118efac767d5d91c3565919c7e021762c4644198ec5b8d426a071", size = 439411, upload-time = "2025-05-29T01:36:16.365Z" },
+]
+
+[[package]]
+name = "aiolimiter"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/23/b52debf471f7a1e42e362d959a3982bdcb4fe13a5d46e63d28868807a79c/aiolimiter-1.2.1.tar.gz", hash = "sha256:e02a37ea1a855d9e832252a105420ad4d15011505512a1a1d814647451b5cca9", size = 7185, upload-time = "2024-12-08T15:31:51.496Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/ba/df6e8e1045aebc4778d19b8a3a9bc1808adb1619ba94ca354d9ba17d86c3/aiolimiter-1.2.1-py3-none-any.whl", hash = "sha256:d3f249e9059a20badcb56b61601a83556133655c11d1eb3dd3e04ff069e5f3c7", size = 6711, upload-time = "2024-12-08T15:31:49.874Z" },
 ]
 
 [[package]]
@@ -665,10 +672,11 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.0.0b17"
+version = "2.0.0b24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
+    { name = "aiolimiter" },
     { name = "async-lru" },
     { name = "click" },
     { name = "cloudpickle" },
@@ -688,7 +696,7 @@ dependencies = [
     { name = "toml" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/e8/1d955a405911551ab252d5c7e16f984e8ea74fb170c35436300a8445892a/flyte-2.0.0b17-py3-none-any.whl", hash = "sha256:943cb21f2c23a5abc210e3f2c0daa24332cc36ea2e015468ac14505e4e1185a6", size = 414345, upload-time = "2025-08-22T21:00:51.01Z" },
+    { url = "https://files.pythonhosted.org/packages/71/a0/4253fc521b425f5b7655f78e9f50872a5ff67e4f6024513cdcfb1e256ee6/flyte-2.0.0b24-py3-none-any.whl", hash = "sha256:751d2f56e83c50273c7fb2e11e84089abdfa20d924a6e68e1ea1d974f74c7db3", size = 453643, upload-time = "2025-10-02T19:41:33.62Z" },
 ]
 
 [[package]]

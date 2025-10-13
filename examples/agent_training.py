@@ -78,8 +78,10 @@ from aigym.types import Action, ActionBatch, Observation, RolloutBatch
 
 @dataclass
 class TrainingArgs:
+    experiment_name: str = "aigym-agent-training"
     n_episodes: int = 10
     model_id: str = "google/gemma-3-1b-it"
+    model_save_dir: str = "./output_model"
     ref_model_id: str | None = None
     optim: str = "adamw"
     lr: float = 1e-4
@@ -105,12 +107,13 @@ class TrainingArgs:
 
 
 class TrainingLogger(Protocol):
+    def log_training_run_info(self, env: WikipediaGymEnv, wandb_url: str | None) -> None: ...
     def log_environment(self, env: WikipediaGymEnv) -> None: ...
-    def log_actions(self, actions: list[Action]) -> None: ...
+    def log_actions(self, actions: list[Action], step_action_index: int | None) -> None: ...
     def log_observation(self, observation: Observation) -> None: ...
     def log_metrics(self, metrics: dict[str, float]) -> None: ...
     def log_rewards(self, rewards: torch.Tensor, returns: torch.Tensor) -> None: ...
-    def flush(self) -> None: ...
+    def flush(self, episode: int, step: int) -> None: ...
 
 
 def masked_mean(
@@ -207,8 +210,8 @@ def compute_log_probs(
     logits = output["logits"][:, prompt_length:-1].clone()
     output_ids = sequence_ids[:, prompt_length + 1 :].clone()
 
-    torch.cuda.empty_cache()
-    del sequence_ids, output
+    # torch.cuda.empty_cache()
+    # del sequence_ids, output
     log_probs = F.log_softmax(logits, dim=-1)
     return log_probs.gather(dim=-1, index=output_ids.unsqueeze(-1)).squeeze(-1)
 
@@ -365,7 +368,7 @@ def update_policy(
         print(f"Loss not finite, skipping backward, loss={loss}, returns: {returns}")
         del log_probs, log_probs_old, log_probs_ref, sequence_ids, action_mask, attention_mask, loss, kl
         torch.cuda.empty_cache()
-        return model
+        return model, None, None, None
 
     loss.backward()
     grad_norm = clip_grad_norm_(model.parameters(), max_norm=training_args.max_grad_norm)
@@ -375,13 +378,46 @@ def update_policy(
     return model, loss, kl, grad_norm
 
 
+def select_action(rewards: list[float], action_batch: ActionBatch, observation: Observation) -> Action | None:
+    step_action = None
+    step_action_index = None
+    for i, action in enumerate(action_batch.actions):
+        if rewards[i] == 0:
+            continue
+        if step_action is None and action.url == observation.target_url:
+            step_action = action
+            step_action_index = i
+        elif step_action is None and action.url == observation.next_url:
+            step_action = action
+            step_action_index = i
+        elif step_action is None and action.url in observation.travel_path:
+            step_action = action
+            step_action_index = i
+    return step_action, step_action_index
+
+
+    if step_action is None and action.url == observation.target_url:
+        step_action = action
+        step_action_index = i
+    elif step_action is None and action.url == observation.next_url:
+        step_action = action
+        step_action_index = i
+    elif step_action is None and action.url in observation.travel_path:
+        step_action = action
+        step_action_index = i
+
+
 class PrintLogger:
+
+    def log_training_run_info(self, env: WikipediaGymEnv, wandb_url: str | None) -> None:
+        pass
+
     def log_environment(self, env: WikipediaGymEnv) -> None:
         pprint.print_travel_path(env.travel_path)
 
-    def log_actions(self, actions: list[Action]) -> None:
+    def log_actions(self, actions: list[Action], step_action_index: int | None) -> None:
         for i, action in enumerate(actions):
-            pprint.print_action(action, index=i)
+            pprint.print_action(action, step_action_index, index=i)
 
     def log_observation(self, observation: Observation) -> None:
         pprint.print_observation(observation)
@@ -399,7 +435,7 @@ class PrintLogger:
             }
         )
 
-    def flush(self) -> None: ...
+    def flush(self, episode: int, step: int) -> None: ...
 
 
 def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
@@ -407,9 +443,9 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
         logger = PrintLogger()
 
     if training_args.wandb_project is None:
-        wandb.init(mode="disabled")
+        run = None
     else:
-        wandb.init(project=training_args.wandb_project)
+        run = wandb.init(project=training_args.wandb_project)
 
     enc = tiktoken.get_encoding("cl100k_base")
 
@@ -418,7 +454,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
         print("\nAvailable GPUs:")
         for i in range(torch.cuda.device_count()):
             print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-            print(f"    Memory: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.1f} GB")
+            print(f"  Memory: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.1f} GB")
         print()
 
     print("Loading model")
@@ -521,7 +557,9 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     )
 
     env = WikipediaGymEnv(n_hops=training_args.n_hops)
-    n_tries = int(training_args.n_hops * training_args.n_tries_per_hop)
+    n_tries = training_args.n_hops * training_args.n_tries_per_hop
+
+    logger.log_training_run_info(env, run.url if run is not None else None)
 
     # Separate rollout step from model updates, i.e. implement an experience
     # replay buffer so that you can sample from it, then update the model.
@@ -537,31 +575,38 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
         console.rule(f"▶️ Episode {episode}")
         observation, info = env.reset()
 
-        logger.log_environment(env)
-
         n_steps = 0
         episode_cumulative_returns = 0
         episode_cumulative_rewards = 0
 
         for step in range(1, n_tries):
+            logger.log_environment(env)
+
             n_steps += 1
             console.rule(f"Step {step}")
             logger.log_observation(observation)
             action_batch: ActionBatch = agent.act(observation)
 
             step_action: Action | None = None
+            step_action_index: int | None = None
             rewards: list[float] = []
             for i, action in enumerate(action_batch.actions):
                 reward = reward_function(action, observation)
                 rewards.append(reward)
                 if action.action is None:
                     continue
-                if action.url == observation.next_url:
-                    step_action = action
-                else:
-                    rprint(f"↪️ Action {action.url} doesn't go to the next url {observation.next_url}, skipping")
 
-            logger.log_actions(action_batch.actions)
+                if step_action is None and action.url == observation.target_url:
+                    step_action = action
+                    step_action_index = i
+                elif step_action is None and action.url == observation.next_url:
+                    step_action = action
+                    step_action_index = i
+                elif step_action is None and action.url in observation.travel_path:
+                    step_action = action
+                    step_action_index = i
+
+            logger.log_actions(action_batch.actions, step_action_index)
 
             rewards: torch.Tensor = torch.tensor(rewards, dtype=model.dtype).unsqueeze(1)
             returns = (rewards - rewards.mean()) / (rewards.std() + training_args.advantage_eps)
@@ -594,8 +639,8 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
             episode_cumulative_returns += returns.squeeze().sum()
 
             metrics = {
-                "returns": returns.mean(),
-                "rewards": rewards.mean(),
+                "max_return": returns.max(),
+                "mean_reward": rewards.mean(),
                 "n_steps": n_steps,
                 "episode_cumulative_returns": episode_cumulative_returns,
                 "episode_cumulative_rewards": episode_cumulative_rewards,
@@ -604,6 +649,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
             }
             logger.log_metrics(metrics)
             wandb.log(metrics)
+            logger.flush(episode, step)
 
             if step_action is not None:
                 # If the action batch contains at least one item with the correct
@@ -613,10 +659,11 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                     rprint(f"Episode terminated or truncated at step {step}")
                     break
 
-        logger.flush()
 
     rprint("Task finished!")
     env.close()
+
+    model.save_pretrained(training_args.model_save_dir)
 
 
 if __name__ == "__main__":

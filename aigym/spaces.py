@@ -230,6 +230,7 @@ class WikipediaGraph(WebGraph):
                 # remove any metadata elements, including infoboxes,
                 # navboxes, and catlinks
                 {"class": "navbox"},
+                {"class": "infobox"},
                 {"class": "catlinks"},
                 {"class": "metadata"},
                 {"id": "contentSub"},

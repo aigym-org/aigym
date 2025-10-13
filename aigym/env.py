@@ -113,6 +113,7 @@ class Env(gym.Env):
             chunk_names=list(x for x in self._state.current_web_page.page_chunk_map if x is not None),
             target_url=self.target_url,
             next_url=self.travel_map[self._state.current_web_page.url],
+            travel_path=self.travel_path,
             current_chunk=self._state.current_chunk_index + 1,
             total_chunks=len(self._state.current_web_page.content_chunks),
         )
@@ -161,8 +162,10 @@ class Env(gym.Env):
     def _current_page_is_target(self):
         _current_url = urllib.parse.urlparse(self._state.current_web_page.url)
         _target_url = urllib.parse.urlparse(self.target_url)
-        return _current_url.netloc == _target_url.netloc and (
-            _current_url.path == _target_url.path or _current_url.path.lower() == _target_url.path.lower()
+        return (
+            _current_url.netloc == _target_url.netloc
+            and (_current_url.path == _target_url.path or _current_url.path.lower() == _target_url.path.lower())
+            and _current_url.fragment == _target_url.fragment
         )
 
     def step(self, action: Action) -> tuple[Observation, float, bool, bool, dict]:
@@ -190,6 +193,7 @@ class Env(gym.Env):
             chunk_names=list(x for x in current_page.page_chunk_map if x is not None),
             target_url=self.target_url,
             next_url=next_url,
+            travel_path=self.travel_path,
             current_chunk=current_page.content_chunk_index,
             total_chunks=len(current_page.page_chunks),
         )
