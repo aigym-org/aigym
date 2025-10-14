@@ -78,7 +78,7 @@ from aigym.types import Action, ActionBatch, Observation, RolloutBatch
 
 @dataclass
 class TrainingArgs:
-    experiment_name: str = "aigym-agent-training"
+    experiment_name: str | None = None
     n_episodes: int = 10
     model_id: str = "google/gemma-3-1b-it"
     model_save_dir: str = "./output_model"
@@ -192,7 +192,6 @@ def compute_log_probs(
     model: Qwen2ForCausalLM,
     sequence_ids: torch.Tensor,
     attention_mask: torch.Tensor,
-    prompt_length: int,
 ):
     position_ids = attention_mask.long().cumsum(dim=-1) - 1
     position_ids = position_ids.clone()  # Clone to avoid modifying input
@@ -207,13 +206,10 @@ def compute_log_probs(
         use_cache=False,
     )
     # truncate logits to only include the action tokens
-    logits = output["logits"][:, prompt_length:-1].clone()
-    output_ids = sequence_ids[:, prompt_length + 1 :].clone()
+    logits = output["logits"]
 
-    # torch.cuda.empty_cache()
-    # del sequence_ids, output
     log_probs = F.log_softmax(logits, dim=-1)
-    return log_probs.gather(dim=-1, index=output_ids.unsqueeze(-1)).squeeze(-1)
+    return log_probs.gather(dim=-1, index=sequence_ids.unsqueeze(-1)).squeeze(-1)
 
 
 def reward_function(action: Action, observation: Observation) -> float:
@@ -270,24 +266,35 @@ def policy(
     # generate completions
     model.eval()
     with torch.no_grad():
-        sequence_ids = model.generate(
+        outputs = model.generate(
             **model_inputs,
             generation_config=generation_config,
             tokenizer=tokenizer,
             pad_token_id=tokenizer.eos_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            return_dict_in_generate=True,
+            output_logits=True,
         )
 
-    completions = tokenizer.batch_decode(
-        sequence_ids[:, model_inputs["input_ids"].shape[1] :],
-        skip_special_tokens=True,
-    )
+    sequence_ids = outputs.sequences[:, model_inputs["input_ids"].shape[1] :]
+    completions = tokenizer.batch_decode(sequence_ids, skip_special_tokens=True)
+
+    # shape: batch_size, sequence_length, vocab_size
+    logits = torch.concat([x.unsqueeze(1) for x in outputs.logits], dim=1)
+    log_probs = F.log_softmax(logits, dim=-1)
+
+    # get the log probabilities for selected token
+    token_log_probs = torch.gather(log_probs, dim=-1, index=sequence_ids.unsqueeze(-1)).squeeze(-1)
+    action_probs = token_log_probs.sum(dim=-1).exp()
 
     return RolloutBatch(
         sequence_ids=sequence_ids,
         input_ids=model_inputs["input_ids"],
         attention_mask=model_inputs["attention_mask"],
         completions=completions,
+        logits=logits,
+        log_probs=token_log_probs,
+        action_probs=action_probs,
     )
 
 
@@ -310,10 +317,9 @@ def reconstruct_sequence_ids(
 
     # action mask makes sure end of sequence tokens are masked out of the
     # loss calculation
-    completion_ids = sequence_ids[:, action_batch.input_ids.shape[1] :]
-    action_mask = torch.full_like(completion_ids, fill_value=True, dtype=torch.bool)
-    action_mask[completion_ids == tokenizer.eos_token_id] = False
-    action_mask = action_mask[:, 1:]
+    action_mask = torch.full_like(sequence_ids, fill_value=True, dtype=torch.bool)
+    action_mask[sequence_ids == tokenizer.eos_token_id] = False
+    # action_mask = action_mask[:, 1:]
 
     pad_token_id = tokenizer.eos_token_id
     attention_mask = sequence_ids != pad_token_id
@@ -339,22 +345,9 @@ def update_policy(
         tokenizer,
     )
 
-    # Idea: trucate or zero out the logits such that only the action tokens are
-    # used in the per-token log probabilities
-    prompt_length = action_batch.input_ids.shape[1]
-    log_probs = compute_log_probs(
-        model,
-        sequence_ids,
-        attention_mask,
-        prompt_length=prompt_length,
-    )
+    log_probs = compute_log_probs(model, sequence_ids, attention_mask)
     with torch.no_grad():
-        log_probs_ref = compute_log_probs(
-            reference_model,
-            sequence_ids,
-            attention_mask,
-            prompt_length=prompt_length,
-        )
+        log_probs_ref = compute_log_probs(reference_model, sequence_ids, attention_mask)
 
     loss, kl = objective(
         log_probs=log_probs,
@@ -378,33 +371,16 @@ def update_policy(
     return model, loss, kl, grad_norm
 
 
-def select_action(rewards: list[float], action_batch: ActionBatch, observation: Observation) -> Action | None:
-    step_action = None
-    step_action_index = None
-    for i, action in enumerate(action_batch.actions):
-        if rewards[i] == 0:
-            continue
-        if step_action is None and action.url == observation.target_url:
-            step_action = action
-            step_action_index = i
-        elif step_action is None and action.url == observation.next_url:
-            step_action = action
-            step_action_index = i
-        elif step_action is None and action.url in observation.travel_path:
-            step_action = action
-            step_action_index = i
-    return step_action, step_action_index
+def select_action(action_batch: ActionBatch) -> tuple[Action | None, int | None]:
+    if (action_batch.action_probs == 0).all():
+        return None, None
 
-
-    if step_action is None and action.url == observation.target_url:
-        step_action = action
-        step_action_index = i
-    elif step_action is None and action.url == observation.next_url:
-        step_action = action
-        step_action_index = i
-    elif step_action is None and action.url in observation.travel_path:
-        step_action = action
-        step_action_index = i
+    # Sample from the action probability distribution
+    index = torch.multinomial(action_batch.action_probs, num_samples=1).item()
+    action = action_batch.actions[index]
+    if action.action is None:
+        return None, None
+    return action, index
 
 
 class PrintLogger:
@@ -417,7 +393,7 @@ class PrintLogger:
 
     def log_actions(self, actions: list[Action], step_action_index: int | None) -> None:
         for i, action in enumerate(actions):
-            pprint.print_action(action, step_action_index, index=i)
+            pprint.print_action(action, step_action_index=step_action_index, index=i)
 
     def log_observation(self, observation: Observation) -> None:
         pprint.print_observation(observation)
@@ -443,7 +419,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
         logger = PrintLogger()
 
     if training_args.wandb_project is None:
-        run = None
+        run = wandb.init(mode="disabled")
     else:
         run = wandb.init(project=training_args.wandb_project)
 
@@ -471,7 +447,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
 
     reference_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         training_args.ref_model_id or training_args.model_id,
-        torch_dtype="auto",
+        dtype="auto",
         device_map="auto",
         attn_implementation=training_args.attn_implementation,
         quantization_config=bnb_config,
@@ -479,7 +455,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
 
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         training_args.model_id,
-        torch_dtype="auto",
+        dtype="auto",
         device_map="auto",
         attn_implementation=training_args.attn_implementation,
         quantization_config=bnb_config,
@@ -579,7 +555,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
         episode_cumulative_returns = 0
         episode_cumulative_rewards = 0
 
-        for step in range(1, n_tries):
+        for step in range(1, n_tries + 1):
             logger.log_environment(env)
 
             n_steps += 1
@@ -593,19 +569,8 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
             for i, action in enumerate(action_batch.actions):
                 reward = reward_function(action, observation)
                 rewards.append(reward)
-                if action.action is None:
-                    continue
 
-                if step_action is None and action.url == observation.target_url:
-                    step_action = action
-                    step_action_index = i
-                elif step_action is None and action.url == observation.next_url:
-                    step_action = action
-                    step_action_index = i
-                elif step_action is None and action.url in observation.travel_path:
-                    step_action = action
-                    step_action_index = i
-
+            step_action, step_action_index = select_action(action_batch)
             logger.log_actions(action_batch.actions, step_action_index)
 
             rewards: torch.Tensor = torch.tensor(rewards, dtype=model.dtype).unsqueeze(1)
@@ -644,6 +609,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 "n_steps": n_steps,
                 "episode_cumulative_returns": episode_cumulative_returns,
                 "episode_cumulative_rewards": episode_cumulative_rewards,
+                "total_cumulative_rewards": total_cumulative_rewards.item(),
                 "log_total_cumulative_rewards": torch.log(total_cumulative_rewards),
                 **update_metrics,
             }
@@ -655,6 +621,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 # If the action batch contains at least one item with the correct
                 # next-page target, take a step. Otherwise, don't change the state.
                 observation, env_reward, terminated, truncated, info = env.step(step_action)
+
                 if terminated or truncated:
                     rprint(f"Episode terminated or truncated at step {step}")
                     break

@@ -46,7 +46,7 @@ reporting_env = flyte.TaskEnvironment(
     image=image.with_pip_packages("unionai-reuse"),
 )
 
-env = flyte.TaskEnvironment(
+training_env = flyte.TaskEnvironment(
     name="aigym-agent-training",
     resources=flyte.Resources(cpu="16", memory="64Gi", gpu="L40s:4"),
     image=image,
@@ -63,6 +63,12 @@ class ReportLogger:
     <style>
     * {{
         font-family: 'Open Sans', sans-serif;
+    }}
+
+    div.report-content {{
+        border-radius: 10px;
+        box-shadow: 2px 2px 20px rgba(0, 0, 0, 0.25);
+        padding: 75px;
     }}
 
     .report-content ol, .report-content ul {{
@@ -195,7 +201,7 @@ async def report_model_dir(model_dir: pathlib.Path):
     await flyte.report.log.aio(text, do_flush=True)
 
 
-@env.task(report=True)
+@training_env.task(report=True)
 async def agent_training(args: TrainingArgs) -> flyte.io.Dir:
     main(args, ReportLogger())
     await report_model_dir(pathlib.Path(args.model_save_dir))
@@ -209,10 +215,12 @@ if __name__ == "__main__":
     training_args, *_ = parser.parse_args_into_dataclasses()
 
     flyte.init_from_config("./config.yaml")
-    run = (
-        flyte.run(
-            agent_training.override(short_name=training_args.experiment_name),
-            args=training_args,
-        )
+    run_name = (
+        training_args.experiment_name
+        or f"aigym-agent-training-{training_args.n_hops}-hops"
+    )
+    run = flyte.run(
+        agent_training.override(short_name=run_name),
+        args=training_args,
     )
     print(run.url)

@@ -204,10 +204,6 @@ class Env(gym.Env):
         reward = 1 if terminated else 0
         truncated = False
         info = {}
-
-        rprint(
-            f"Next observation: {observation.url}, position {observation.current_chunk} / {observation.total_chunks}"
-        )
         return observation, reward, terminated, truncated, info
 
     def render(self):

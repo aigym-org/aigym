@@ -83,14 +83,13 @@ This will create a `config.yaml` file in the current directory.
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
-    --experiment_name aigym-1-hop \
     --model_id google/gemma-3-12b-it \
     --enable_gradient_checkpointing \
-    --n_episodes 20 \
+    --n_episodes 100 \
     --n_hops 1 \
     --n_tries_per_hop 5 \
-    --rollout_min_new_tokens 64 \
-    --rollout_max_new_tokens 512 \
+    --rollout_min_new_tokens 256 \
+    --rollout_max_new_tokens 1024 \
     --group_size 4 \
     --wandb_project aigym-agent-training \
     --attn_implementation eager
@@ -100,14 +99,29 @@ Example that goes 2 hops away:
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
-    --experiment_name aigym-2-hops \
     --model_id google/gemma-3-12b-it \
     --enable_gradient_checkpointing \
-    --n_episodes 20 \
+    --n_episodes 200 \
     --n_hops 2 \
     --n_tries_per_hop 5 \
     --rollout_min_new_tokens 256 \
-    --rollout_max_new_tokens 512 \
+    --rollout_max_new_tokens 1024 \
+    --group_size 4 \
+    --wandb_project aigym-agent-training \
+    --attn_implementation eager
+```
+
+Run a sweep with different number of hops:
+
+```bash
+PYTHONPATH=. python examples/agent_training_flyte_sweep.py \
+    --model_id google/gemma-3-12b-it \
+    --enable_gradient_checkpointing \
+    --n_episodes 100 \
+    --n_hops_list "[1, 2, 3, 4, 5]" \
+    --n_tries_per_hop 1 \
+    --rollout_min_new_tokens 256 \
+    --rollout_max_new_tokens 1024 \
     --group_size 4 \
     --wandb_project aigym-agent-training \
     --attn_implementation eager

@@ -86,7 +86,7 @@ class WebGraph(gym.Space[WebPage]):
     def __init__(
         self,
         text_format: Literal["markdown", "html", "soup"] = "markdown",
-        content_id: str | None = None,
+        content_id: str | list[str] | None = None,
         select_tags: list[str] | None = None,
         remove_attrs: list[dict[str, str]] | None = None,
         chunk_pattern: str | None = None,
@@ -106,7 +106,7 @@ class WebGraph(gym.Space[WebPage]):
             random_seed: The random seed to use.
         """
         self.text_format = text_format
-        self.content_id = content_id
+        self.content_id = content_id if isinstance(content_id, list) else [content_id]
         self.select_tags = select_tags
         self.remove_attrs = remove_attrs
         self.chunk_pattern = chunk_pattern
@@ -168,9 +168,13 @@ class WebGraph(gym.Space[WebPage]):
     def get_soup(self, url: str):
         response = self.session.get(url, follow_redirects=True)
         soup = BeautifulSoup(response.text, "html.parser")
-        content = soup.find(id=self.content_id)
-        if content is None:
-            raise ValueError(f"Content with id {self.content_id} not found")
+
+        for content_id in self.content_id:
+            content = soup.find(id=content_id)
+            if content is not None:
+                break
+        else:
+            raise ValueError(f"Content with ids {self.content_id} not found for url {url}. Soup: {soup}")
 
         if self.remove_attrs:
             for attrs in self.remove_attrs:
@@ -223,7 +227,7 @@ class WikipediaGraph(WebGraph):
     def __init__(self, *args, **kwargs):
         super().__init__(
             *args,
-            content_id="bodyContent",
+            content_id=["mw-content-text", "bodyContent"],
             # only select main content
             select_tags=["h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "table"],
             remove_attrs=[
