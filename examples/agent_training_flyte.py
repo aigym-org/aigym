@@ -113,9 +113,10 @@ class ReportLogger:
         text += "</ol>"
         self.html += text
 
-    def log_actions(self, actions: list[types.Action], step_action_index: int | None):
+    def log_actions(self, actions: list[types.Action], action_probs: list[float], step_action_index: int | None):
         self.html += "<h1>Actions</h1>"
         for i, action in enumerate(actions):
+            action_prob = action_probs[i]
             if step_action_index is not None and step_action_index == i:
                 selected_action_text = f" 👈 selected"
             else:
@@ -126,6 +127,7 @@ class ReportLogger:
                 <div class="action {'invalid' if action.action is None else 'valid'}">
                     <h3>{'❌ Invalid Action' if action.action is None else '✅ Action'} [{i}]{selected_action_text}</h3>
                     <ul>
+                    {f'<li><strong>Probability:</strong> {action_prob}</li>'}
                     {'<li><strong>Error type:</strong> ' + str(action.error_type) + '</li>' if action.action is None else ''}
                     {'<li><strong>Action:</strong> ' + str(action.action) + '</li>' if action.action else ''}
                     {'<li><strong>URL:</strong> <a href="' + str(action.url) + ' " target="_blank">' + str(action.url) + '</a></li>' if action.url else ''}
@@ -194,7 +196,8 @@ def report_step(html: str):
 
 
 async def report_model_dir(model_dir: pathlib.Path):
-    text = "<h1>💾 Model Files</h1><ul>"
+    text = "<div class='report-content'>"
+    text += "<h1>💾 Model Files</h1><ul>"
     for f in model_dir.glob("**/*"):
         text += f"<li>{f.name}</li>"
     text += "</ul>"

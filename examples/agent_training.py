@@ -46,7 +46,7 @@ python examples/agent_training.py \
 import tempfile
 from dataclasses import dataclass
 from functools import partial
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import tiktoken
 import torch
@@ -57,6 +57,7 @@ from peft import LoraConfig, PeftModelForCausalLM, get_peft_model
 from rich import print as rprint
 from rich.console import Console
 from torch.nn.utils import clip_grad_norm_
+from torch.nn.utils.clip_grad import _get_total_norm
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -73,6 +74,7 @@ import aigym.prompts as prompts
 import wandb
 from aigym.agent import Agent
 from aigym.env import WikipediaGymEnv
+from aigym.exceptions import InvalidActionError
 from aigym.types import Action, ActionBatch, Observation, RolloutBatch
 
 
@@ -83,6 +85,7 @@ class TrainingArgs:
     model_id: str = "google/gemma-3-1b-it"
     model_save_dir: str = "./output_model"
     ref_model_id: str | None = None
+    static_env: bool = False  # if True, the environment will not change over each episode
     optim: str = "adamw"
     lr: float = 1e-4
     group_size: int = 4
@@ -91,6 +94,9 @@ class TrainingArgs:
     kl_weight: float = 0.01
     max_grad_norm: float = 1.0
     use_lora: bool = True
+    lora_r: int = 16
+    lora_alpha: int = 64
+    lora_dropout: float = 0.1
     use_bnb_quantization: bool = False
     enable_gradient_checkpointing: bool = False
     attn_implementation: str = "eager"
@@ -109,7 +115,7 @@ class TrainingArgs:
 class TrainingLogger(Protocol):
     def log_training_run_info(self, env: WikipediaGymEnv, wandb_url: str | None) -> None: ...
     def log_environment(self, env: WikipediaGymEnv) -> None: ...
-    def log_actions(self, actions: list[Action], step_action_index: int | None) -> None: ...
+    def log_actions(self, actions: list[Action], action_probs: list[float], step_action_index: int | None) -> None: ...
     def log_observation(self, observation: Observation) -> None: ...
     def log_metrics(self, metrics: dict[str, float]) -> None: ...
     def log_rewards(self, rewards: torch.Tensor, returns: torch.Tensor) -> None: ...
@@ -285,7 +291,12 @@ def policy(
 
     # get the log probabilities for selected token
     token_log_probs = torch.gather(log_probs, dim=-1, index=sequence_ids.unsqueeze(-1)).squeeze(-1)
-    action_probs = token_log_probs.sum(dim=-1).exp()
+    mask = sequence_ids != tokenizer.eos_token_id
+    action_log_probs = (token_log_probs * mask).sum(dim=-1)
+
+    # normalize log probs by the number of tokens in the sequence
+    action_log_probs = action_log_probs / mask.sum(dim=-1)
+    action_probs = F.softmax(action_log_probs, dim=0)
 
     return RolloutBatch(
         sequence_ids=sequence_ids,
@@ -319,10 +330,7 @@ def reconstruct_sequence_ids(
     # loss calculation
     action_mask = torch.full_like(sequence_ids, fill_value=True, dtype=torch.bool)
     action_mask[sequence_ids == tokenizer.eos_token_id] = False
-    # action_mask = action_mask[:, 1:]
-
-    pad_token_id = tokenizer.eos_token_id
-    attention_mask = sequence_ids != pad_token_id
+    attention_mask = sequence_ids != tokenizer.eos_token_id
 
     return sequence_ids, action_mask, attention_mask, log_probs_old
 
@@ -364,22 +372,25 @@ def update_policy(
         return model, None, None, None
 
     loss.backward()
-    grad_norm = clip_grad_norm_(model.parameters(), max_norm=training_args.max_grad_norm)
-    print(f"loss={loss: .10f}, kl={kl: .10f}, grad_norm={grad_norm: .10f}")
+    grad_norm_preclip = clip_grad_norm_(model.parameters(), max_norm=training_args.max_grad_norm)
+    grad_norm = _get_total_norm([p.grad for p in model.parameters() if p.grad is not None])
+    print(f"loss={loss: .10f}, kl={kl: .10f}, grad_norm_preclip={grad_norm_preclip: .10f}, grad_norm={grad_norm: .10f}")
     optimizer.step()
     torch.cuda.empty_cache()
-    return model, loss, kl, grad_norm
+    return model, loss, kl, grad_norm_preclip, grad_norm
 
 
-def select_action(action_batch: ActionBatch) -> tuple[Action | None, int | None]:
+def select_action(action_batch: ActionBatch, selection_type: Literal["greedy", "sample"] = "greedy") -> tuple[Action | None, int | None]:
     if (action_batch.action_probs == 0).all():
         return None, None
 
     # Sample from the action probability distribution
-    index = torch.multinomial(action_batch.action_probs, num_samples=1).item()
+    if selection_type == "greedy":
+        index = action_batch.action_probs.argmax().item()
+    elif selection_type == "sample":
+        index = torch.multinomial(action_batch.action_probs, num_samples=1).item()
+
     action = action_batch.actions[index]
-    if action.action is None:
-        return None, None
     return action, index
 
 
@@ -391,9 +402,9 @@ class PrintLogger:
     def log_environment(self, env: WikipediaGymEnv) -> None:
         pprint.print_travel_path(env.travel_path)
 
-    def log_actions(self, actions: list[Action], step_action_index: int | None) -> None:
+    def log_actions(self, actions: list[Action], action_probs: list[float], step_action_index: int | None) -> None:
         for i, action in enumerate(actions):
-            pprint.print_action(action, step_action_index=step_action_index, index=i)
+            pprint.print_action(action, action_prob=action_probs[i], step_action_index=step_action_index, index=i)
 
     def log_observation(self, observation: Observation) -> None:
         pprint.print_observation(observation)
@@ -465,10 +476,10 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     if training_args.use_lora:
         target_lora_modules = ["q_proj", "k_proj", "v_proj"]
         lora_config = LoraConfig(
-            r=16,
-            lora_alpha=64,
+            r=training_args.lora_r,
+            lora_alpha=training_args.lora_alpha,
             target_modules=target_lora_modules,
-            lora_dropout=0.1,
+            lora_dropout=training_args.lora_dropout,
             bias="none",
             task_type="CAUSAL_LM",
         )
@@ -545,19 +556,24 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     # old log probs.
     # See: https://www.perplexity.ai/search/can-you-give-me-the-basic-grpo-g3kdNUI4RSmbAtoxi_HcjQ#6
 
-    total_cumulative_rewards = 0
+    total_cumulative_reward = 0
     console = Console(highlight=False)
+    global_step = 0
     for episode in range(1, training_args.n_episodes + 1):
         console.rule(f"▶️ Episode {episode}")
-        observation, info = env.reset()
+
+        if episode == 1 or (episode > 1 and not training_args.static_env):
+            # reset the environment if it's the first episode or if the
+            # environment is not static and use the seed for the episode
+            observation, info = env.reset(seed=episode)
 
         n_steps = 0
-        episode_cumulative_returns = 0
-        episode_cumulative_rewards = 0
+        episode_cumulative_reward = 0
+        target_found = False
 
         for step in range(1, n_tries + 1):
             logger.log_environment(env)
-
+            global_step += 1
             n_steps += 1
             console.rule(f"Step {step}")
             logger.log_observation(observation)
@@ -571,7 +587,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 rewards.append(reward)
 
             step_action, step_action_index = select_action(action_batch)
-            logger.log_actions(action_batch.actions, step_action_index)
+            logger.log_actions(action_batch.actions, action_batch.action_probs, step_action_index)
 
             rewards: torch.Tensor = torch.tensor(rewards, dtype=model.dtype).unsqueeze(1)
             returns = (rewards - rewards.mean()) / (rewards.std() + training_args.advantage_eps)
@@ -582,7 +598,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 update_metrics = {}
             else:
                 # update the model
-                model, loss, kl, grad_norm = update_policy(
+                model, loss, kl, grad_norm_preclip, grad_norm = update_policy(
                     action_batch,
                     returns,
                     optimizer,
@@ -595,36 +611,50 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 update_metrics = {
                     "loss": loss,
                     "kl": kl,
+                    "grad_norm_preclip": grad_norm_preclip,
                     "grad_norm": grad_norm,
                 }
 
             rewards_sum = rewards.sum()
-            total_cumulative_rewards += rewards_sum
-            episode_cumulative_rewards += rewards_sum
-            episode_cumulative_returns += returns.squeeze().sum()
+            total_cumulative_reward += rewards_sum
+            episode_cumulative_reward += rewards_sum
 
             metrics = {
                 "max_return": returns.max(),
                 "mean_reward": rewards.mean(),
                 "n_steps": n_steps,
-                "episode_cumulative_returns": episode_cumulative_returns,
-                "episode_cumulative_rewards": episode_cumulative_rewards,
-                "total_cumulative_rewards": total_cumulative_rewards.item(),
-                "log_total_cumulative_rewards": torch.log(total_cumulative_rewards),
                 **update_metrics,
             }
             logger.log_metrics(metrics)
-            wandb.log(metrics)
+            wandb.log(metrics, step=global_step)
             logger.flush(episode, step)
 
             if step_action is not None:
                 # If the action batch contains at least one item with the correct
                 # next-page target, take a step. Otherwise, don't change the state.
-                observation, env_reward, terminated, truncated, info = env.step(step_action)
+                try:
+                    observation, env_reward, terminated, truncated, info = env.step(step_action)
+                except InvalidActionError as e:
+                    rprint(f"Error stepping with action {step_action}. Error:{e}")
+                    continue
 
                 if terminated or truncated:
                     rprint(f"Episode terminated or truncated at step {step}")
+                    target_found = terminated
                     break
+
+        wandb.log(
+            {
+                "episode": episode,
+                "episode_cumulative_reward": episode_cumulative_reward,
+                "episode_mean_reward": episode_cumulative_reward / n_steps,
+                "target_found": int(target_found),
+                "n_steps": n_steps,
+                "negative_n_steps": -n_steps,
+                "total_cumulative_rewards": total_cumulative_reward.item(),
+            },
+            step=global_step,
+        )
 
 
     rprint("Task finished!")

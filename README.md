@@ -95,17 +95,18 @@ PYTHONPATH=. python examples/agent_training_flyte.py \
     --attn_implementation eager
 ```
 
-Example that goes 2 hops away:
+Example that goes 5 hops away:
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
     --model_id google/gemma-3-12b-it \
     --enable_gradient_checkpointing \
-    --n_episodes 200 \
-    --n_hops 2 \
-    --n_tries_per_hop 5 \
+    --n_episodes 100 \
+    --lora_r 64 \
+    --n_hops 5 \
+    --n_tries_per_hop 2 \
     --rollout_min_new_tokens 256 \
-    --rollout_max_new_tokens 1024 \
+    --rollout_max_new_tokens 512 \
     --group_size 4 \
     --wandb_project aigym-agent-training \
     --attn_implementation eager

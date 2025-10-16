@@ -7,3 +7,7 @@ class NoPathsFoundError(Exception):
     def __init__(self, url: str):
         self.url = url
         super().__init__(f"No links found in {url}.")
+
+
+class InvalidActionError(ValueError):
+    """Exception raised when an invalid step is taken."""

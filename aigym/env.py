@@ -6,7 +6,7 @@ from typing import Any
 import gymnasium as gym
 from rich import print as rprint
 
-from aigym.exceptions import NoPathsFoundError
+from aigym.exceptions import NoPathsFoundError, InvalidActionError
 from aigym.spaces import Tokens, WebGraph, WikipediaGraph
 from aigym.types import Action, InternalEnvState, Observation
 
@@ -47,6 +47,8 @@ class Env(gym.Env):
         self.target_url = None
         self.travel_checkpoints = []
         self.travel_path = []
+
+        # TODO: add invalid actions per episode to add to the observation
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -106,13 +108,19 @@ class Env(gym.Env):
         # set new internal state
         self._state.current_web_page = current_web_page
         self._state.current_chunk_index = 0  # consider making this random
+        try:
+            next_url = self.travel_map[self._state.current_web_page.url]
+        except KeyError as e:
+            raise KeyError(
+                f"Next url not found for {self._state.current_web_page.url} with travel map {self.travel_map}"
+            ) from e
 
         observation = Observation(
             url=self._state.current_web_page.url,
             context=self._state.current_web_page.context,
             chunk_names=list(x for x in self._state.current_web_page.page_chunk_map if x is not None),
             target_url=self.target_url,
-            next_url=self.travel_map[self._state.current_web_page.url],
+            next_url=next_url,
             travel_path=self.travel_path,
             current_chunk=self._state.current_chunk_index + 1,
             total_chunks=len(self._state.current_web_page.content_chunks),
@@ -171,11 +179,14 @@ class Env(gym.Env):
     def step(self, action: Action) -> tuple[Observation, float, bool, bool, dict]:
         """Take a step in the environment."""
         if action.action == "visit_url":
-            self._state.current_web_page = self.graph.get_page(action.url)
+            try:
+                self._state.current_web_page = self.graph.get_page(action.url)
+            except ValueError as e:
+                raise InvalidActionError(f"Invalid step taken at {action.url}. Error: {e}") from e
             self._state.current_chunk_key = urllib.parse.urlparse(action.url).fragment
             self._state.current_chunk_index = 0
         else:
-            raise ValueError(f"invalid action: {action}")
+            raise InvalidActionError(f"invalid action: {action}")
 
         current_page = self._state.current_web_page
         _next_url = self.travel_map[self.travel_checkpoints[-1]]

@@ -44,7 +44,7 @@ def print_context(observation: Observation, head: int = 500, tail: int = 500):
         console.print(f"{char} [link={observation.url}#{chunk_name}]{chunk_name}[/link]", end=end)
 
 
-def print_action(action: Action, step_action_index: int | None = None, index: int | None = None):
+def print_action(action: Action, action_prob: float, step_action_index: int | None = None, index: int | None = None):
     completion_text = rich.markup.escape(
         action.completion.replace("\n", "").replace("\r", "").replace("\t", "").replace("    ", "").replace("  ", "")
     )
@@ -61,6 +61,7 @@ def print_action(action: Action, step_action_index: int | None = None, index: in
     console = Console(highlight=False)
     if action.action is None:
         console.print(f"[red]■ Invalid Action [{index or 0}][/red]")
+        console.print(f"├── Probability: {action_prob}")
         console.print(f"├── Error type: {action.error_type}")
         console.print(f"├── Parse type: {action.parse_type}")
         console.print(f"└── Completion: {completion_text}", end="\n\n")
