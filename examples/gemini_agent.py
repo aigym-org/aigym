@@ -4,7 +4,6 @@ import os
 from typing import Generator
 
 import dotenv
-import tiktoken
 from google import genai
 from google.genai import types
 from rich import print as rprint
@@ -17,7 +16,6 @@ from aigym.env import WikipediaGymEnv
 def main():
     dotenv.load_dotenv()
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    enc = tiktoken.get_encoding("cl100k_base")
 
     def policy(prompt: str) -> Generator[str, None, None]:
         for chunk in client.models.generate_content_stream(
@@ -34,25 +32,22 @@ def main():
                 break
             yield delta
 
-    agent = Agent(
-        policy=policy,
-        token_encoder=enc,
-        url_boundaries=["https://en.wikipedia.org"],
-    )
-
-    env = WikipediaGymEnv(n_hops=3)
-    # observation, info = env.reset()
+    n_hops = 2
+    n_tries_per_hop = 5
+    n_tries = n_hops * n_tries_per_hop
+    agent = Agent(policy=policy)
+    env = WikipediaGymEnv(n_hops=n_hops)
     observation, info = env.reset_manual(
-        start_url="https://en.wikipedia.org/wiki/Chenggong_Reservoir",
-        target_url="https://en.wikipedia.org/wiki/Traditional_Chinese_characters",
-        travel_path=[
-            "https://en.wikipedia.org/wiki/Chenggong_Reservoir",
-            "https://en.wikipedia.org/wiki/Water_Resources_Agency",
-            "https://en.wikipedia.org/wiki/Traditional_Chinese_characters",
-        ],
+        [
+            "https://en.wikipedia.org/wiki/The_Primevals",
+            "https://en.wikipedia.org/wiki/Juliet_Mills",
+            "https://en.wikipedia.org/wiki/Miniseries",
+        ]
     )
+    succeeded = False
 
-    for step in range(1, 101):
+    pprint.print_travel_path(env.travel_path)
+    for step in range(1, n_tries + 1):
         pprint.print_observation(observation)
         pprint.print_context(observation)
         action = agent.act(observation)
@@ -62,10 +57,15 @@ def main():
         pprint.print_action(action)
         observation, reward, terminated, truncated, info = env.step(action)
         if terminated or truncated:
+            succeeded = True
             rprint(f"Episode terminated or truncated at step {step}")
             break
 
-    rprint("Task finished!")
+    rprint(f"Finished after {step} tries")
+    if succeeded:
+        rprint("✅ Target found")
+    else:
+        rprint("❌ Target not found")
     env.close()
 
 

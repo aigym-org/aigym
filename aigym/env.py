@@ -1,11 +1,14 @@
 """Environment for navigating the web."""
 
+import random
 import urllib.parse
+from urllib.parse import ParseResult
 from typing import Any
 
 import gymnasium as gym
 from rich import print as rprint
 
+import aigym.prompts as prompts
 from aigym.exceptions import NoPathsFoundError, InvalidActionError
 from aigym.spaces import Tokens, WebGraph, WikipediaGraph
 from aigym.types import Action, InternalEnvState, Observation
@@ -22,6 +25,9 @@ class Env(gym.Env):
         n_hops: int | None = None,
         tokenizer: Any | None = None,
         render_mode: str | None = None,
+        prompt_template: str | None = None,
+        url_boundaries: list[str] | None = None,
+        start_url_anchors: list[str] | None = None,
         **kwargs,
     ):
         """Initialize the environment.
@@ -34,6 +40,9 @@ class Env(gym.Env):
             tokenizer: The tokenizer to use for the action space.
             render_mode: The mode to render the environment in.
             chunk_pattern: regex pattern to chunk on
+            prompt_template: The template to use for the prompt.
+            url_boundaries: The url boundaries to use for the environment.
+            start_url_anchors: Always start in one of these url anchors.
         """
         # this is a gym.Env attribute
         self.render_mode = render_mode
@@ -42,9 +51,14 @@ class Env(gym.Env):
         self.graph: WebGraph = web_graph
         self.action_space: Tokens = Tokens(tokenizer=tokenizer)
         self.n_hops = n_hops
+        self.prompt_template = prompt_template
+        self.url_boundaries = url_boundaries
+        self.start_url_anchors = start_url_anchors or []
 
+        # per episode attributes
         self.start_url = None
         self.target_url = None
+        self.resolved_target_url = None
         self.travel_checkpoints = []
         self.travel_path = []
 
@@ -102,6 +116,10 @@ class Env(gym.Env):
     def random_start(self) -> str:
         return str(self.graph.session.get(self.graph.RANDOM_URL, follow_redirects=True).url)
 
+    def random_start_url_anchor(self) -> str:
+        url = random.choice(self.start_url_anchors)
+        return str(self.graph.session.get(url, follow_redirects=True).url)
+
     def _get_first_observation(self):
         current_web_page = self.graph.get_page(self.start_url).page_chunks[0]
 
@@ -118,7 +136,9 @@ class Env(gym.Env):
         observation = Observation(
             url=self._state.current_web_page.url,
             context=self._state.current_web_page.context,
+            prompt=self.format_prompt(self._state.current_web_page.context, self._state.current_web_page.url, self.target_url, self.url_boundaries),
             chunk_names=list(x for x in self._state.current_web_page.page_chunk_map if x is not None),
+            url_boundaries=self.url_boundaries,
             target_url=self.target_url,
             next_url=next_url,
             travel_path=self.travel_path,
@@ -134,6 +154,7 @@ class Env(gym.Env):
     ):
         self.start_url = travel_path[0]
         self.target_url = travel_path[-1]
+        self.resolved_target_url = self.graph.get_page(self.target_url).url
         self.travel_path = travel_path
         self.travel_checkpoints = [self.start_url]
         return self._get_first_observation()
@@ -148,6 +169,8 @@ class Env(gym.Env):
         """Reset the environment."""
         if start_url is not None:
             self.start_url = start_url
+        elif self.start_url_anchors:
+            self.start_url = self.random_start_url_anchor()
         else:
             self.start_url = self.random_start()
 
@@ -162,18 +185,27 @@ class Env(gym.Env):
                     continue
                 raise
 
+        self.resolved_target_url = self.graph.get_page(self.target_url).url
         self.start_url = self.travel_path[0]
         self.travel_checkpoints = [self.start_url]
         observation, info = self._get_first_observation()
         return observation, info
 
+    @staticmethod
+    def _is_target_page(url: ParseResult, target_url: ParseResult) -> bool:
+        return (
+            url.netloc == target_url.netloc
+            and (url.path == target_url.path or url.path.lower() == target_url.path.lower())
+            and url.fragment == target_url.fragment
+        )
+
     def _current_page_is_target(self):
         _current_url = urllib.parse.urlparse(self._state.current_web_page.url)
         _target_url = urllib.parse.urlparse(self.target_url)
+        _resolved_target_url = urllib.parse.urlparse(self.resolved_target_url)
         return (
-            _current_url.netloc == _target_url.netloc
-            and (_current_url.path == _target_url.path or _current_url.path.lower() == _target_url.path.lower())
-            and _current_url.fragment == _target_url.fragment
+            self._is_target_page(_current_url, _target_url)
+            or self._is_target_page(_current_url, _resolved_target_url)
         )
 
     def step(self, action: Action) -> tuple[Observation, float, bool, bool, dict]:
@@ -201,6 +233,13 @@ class Env(gym.Env):
         observation = Observation(
             url=current_page.url,
             context=current_page.context,
+            prompt=self.format_prompt(
+                context=current_page.context,
+                current_url=current_page.url,
+                target_url=self.target_url,
+                url_boundaries=self.url_boundaries,
+            ),
+            url_boundaries=self.url_boundaries,
             chunk_names=list(x for x in current_page.page_chunk_map if x is not None),
             target_url=self.target_url,
             next_url=next_url,
@@ -216,6 +255,20 @@ class Env(gym.Env):
         truncated = False
         info = {}
         return observation, reward, terminated, truncated, info
+
+    def format_prompt(
+        self,
+        context: str,
+        current_url: str,
+        target_url: str,
+        url_boundaries: list[str] | None,
+    ) -> str:
+        return self.prompt_template.format(
+            observation=context,
+            current_url=current_url,
+            target_url=target_url,
+            url_boundaries=", ".join(url_boundaries) if url_boundaries else "NONE",
+        )
 
     def render(self):
         """Render the environment."""
@@ -258,8 +311,10 @@ class WikipediaGymEnv(Env):
         self,
         *args,
         wikipedia_graph: WikipediaGraph | None = None,
+        prompt_template: str | None = None,
         chunk_pattern: str | None = None,
         chunk_char_limit: int | None = 5000,
+        url_boundaries: list[str] | None = None,
         **kwargs,
     ):
         if wikipedia_graph is None:
@@ -270,5 +325,7 @@ class WikipediaGymEnv(Env):
         super().__init__(
             wikipedia_graph,
             *args,
+            prompt_template=prompt_template or prompts.WIKIPEDEA_ACTION_TEMPLATE,
+            url_boundaries=url_boundaries or ["https://en.wikipedia.org"],
             **kwargs,
         )

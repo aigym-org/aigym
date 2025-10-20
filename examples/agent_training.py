@@ -43,12 +43,12 @@ python examples/agent_training.py \
 ```
 """
 
+import json
 import tempfile
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Protocol, cast
 
-import tiktoken
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -86,6 +86,7 @@ class TrainingArgs:
     model_save_dir: str = "./output_model"
     ref_model_id: str | None = None
     static_env: bool = False  # if True, the environment will not change over each episode
+    start_url_anchors: str | None = None
     optim: str = "adamw"
     lr: float = 1e-4
     group_size: int = 4
@@ -246,7 +247,6 @@ def policy(
     prompt: str,
 ) -> RolloutBatch:
     # tokenize and prepare inputs for batch generation
-
     chat_messages = [
         {
             "role": "system",
@@ -434,8 +434,6 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     else:
         run = wandb.init(project=training_args.wandb_project)
 
-    enc = tiktoken.get_encoding("cl100k_base")
-
     if torch.cuda.is_available():
         print(f"Using CUDA: {torch.cuda.get_device_name(torch.cuda.current_device())}")
         print("\nAvailable GPUs:")
@@ -539,11 +537,17 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
             generation_config,
         ),
         stream=False,
-        token_encoder=enc,
-        url_boundaries=["https://en.wikipedia.org"],
     )
 
-    env = WikipediaGymEnv(n_hops=training_args.n_hops)
+    if training_args.start_url_anchors is not None:
+        start_url_anchors = json.loads(training_args.start_url_anchors)
+    else:
+        start_url_anchors = None
+
+    env = WikipediaGymEnv(
+        n_hops=training_args.n_hops,
+        start_url_anchors=start_url_anchors,
+    )
     n_tries = training_args.n_hops * training_args.n_tries_per_hop
 
     logger.log_training_run_info(env, run.url if run is not None else None)
@@ -559,13 +563,24 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     total_cumulative_reward = 0
     console = Console(highlight=False)
     global_step = 0
+    # observation, info = env.reset()
+    observation, info = env.reset_manual(
+        [
+            "https://en.wikipedia.org/wiki/Mammal",
+            "https://en.wikipedia.org/wiki/Arboreal_locomotion",
+            "https://en.wikipedia.org/wiki/Tree",
+        ]
+    )
+    initial_travel_path = env.travel_path
     for episode in range(1, training_args.n_episodes + 1):
         console.rule(f"▶️ Episode {episode}")
 
-        if episode == 1 or (episode > 1 and not training_args.static_env):
-            # reset the environment if it's the first episode or if the
-            # environment is not static and use the seed for the episode
-            observation, info = env.reset(seed=episode)
+        if episode > 1:
+            # reset the environment if it's not the first episode
+            if training_args.static_env:
+                observation, info = env.reset_manual(initial_travel_path)
+            else:
+                observation, info = env.reset()
 
         n_steps = 0
         episode_cumulative_reward = 0
@@ -635,7 +650,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
                 try:
                     observation, env_reward, terminated, truncated, info = env.step(step_action)
                 except InvalidActionError as e:
-                    rprint(f"Error stepping with action {step_action}. Error:{e}")
+                    rprint(f"Error stepping with action {step_action.url}")
                     continue
 
                 if terminated or truncated:

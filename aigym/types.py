@@ -57,8 +57,8 @@ class PageContent(BaseModel):
 
 
 def _format_context(url: str, content: str, chunk_urls: list[str]) -> str:
-    urls = "\n".join([f"- {url}" for url in chunk_urls])
-    if urls:
+    if chunk_urls:
+        urls = "\n".join([f"- {url}" for url in chunk_urls])
         toc = f"Table of contents:\n{urls}\n"
     else:
         toc = ""
@@ -121,7 +121,9 @@ class Observation(BaseModel):
     """The observation of the environment."""
 
     url: str
-    context: str
+    context: str  # raw context
+    prompt: str  # formatted prompt
+    url_boundaries: list[str] | None
     chunk_names: list[str]
     next_url: str | None
     target_url: str

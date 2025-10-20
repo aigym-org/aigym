@@ -2,7 +2,6 @@
 
 from typing import Generator
 
-import tiktoken
 from openai import OpenAI
 from rich import print as rprint
 
@@ -13,8 +12,6 @@ from aigym.env import WikipediaGymEnv
 
 def main():
     client = OpenAI()
-
-    enc = tiktoken.get_encoding("cl100k_base")
 
     def policy(prompt: str) -> Generator[str, None, None]:
         for chunk in client.chat.completions.create(
@@ -30,19 +27,10 @@ def main():
                 break
             yield delta
 
-    agent = Agent(
-        policy=policy,
-        token_encoder=enc,
-        url_boundaries=["https://en.wikipedia.org"],
-    )
-
-    env = WikipediaGymEnv()
-    observation, info = env.reset_manual(
-        start_url="https://en.wikipedia.org/wiki/Mammal",
-        target_url="https://en.wikipedia.org/wiki/Dog",
-        travel_path=["https://en.wikipedia.org/wiki/Mammal", "https://en.wikipedia.org/wiki/Dog"],
-    )
-
+    agent = Agent(policy=policy)
+    env = WikipediaGymEnv(n_hops=2)
+    observation, info = env.reset()
+    
     for step in range(1, 101):
         pprint.print_observation(observation)
         pprint.print_context(observation)

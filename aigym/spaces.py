@@ -1,4 +1,4 @@
-"""Definition of spaces in AIGym."""
+"""Spaces in AIGym."""
 
 import functools
 import random
@@ -16,8 +16,6 @@ from markdownify import markdownify as md
 
 from aigym.exceptions import NoPathsFoundError
 from aigym.types import PageContent, WebPage
-
-DEFAULT_IGNORE_HEADERS = ["References", "Bibliography", "External_links", "Footnotes", "See_also"]
 
 
 @lru_cache
@@ -44,12 +42,8 @@ def chunk_by_pattern(
     content: str,
     pattern: str,
     chunk_char_limit: int | None = None,
-    ignore_headers: list[str] | None = None,
 ) -> list[PageContent]:
     """Chunk a list of strings by a pattern."""
-
-    if ignore_headers is None:
-        ignore_headers = DEFAULT_IGNORE_HEADERS
 
     url_path = urllib.parse.urlparse(url).path
     main_header = url_path.split("/")[-1].strip()
@@ -91,6 +85,8 @@ class WebGraph(gym.Space[WebPage]):
         remove_attrs: list[dict[str, str]] | None = None,
         chunk_pattern: str | None = None,
         chunk_char_limit: int | None = None,
+        first_chunk_only: bool = False,
+        ignore_headers: list[str] | None = None,
         random_seed: int | None = None,
     ):
         """Initialize the web page.
@@ -103,6 +99,7 @@ class WebGraph(gym.Space[WebPage]):
             remove_attrs: The attributes to remove from the web page.
             chunk_pattern: Regex pattern to use to chunk the web page.
             chunk_char_limit: The maximum number of characters per chunk.
+            ignore_headers: The headers to ignore when chunking the web page.
             random_seed: The random seed to use.
         """
         self.text_format = text_format
@@ -111,6 +108,8 @@ class WebGraph(gym.Space[WebPage]):
         self.remove_attrs = remove_attrs
         self.chunk_pattern = chunk_pattern
         self.chunk_char_limit = chunk_char_limit
+        self.first_chunk_only = first_chunk_only
+        self.ignore_headers = ignore_headers
         self.random_seed = random_seed
 
         # create httpx session
@@ -202,10 +201,9 @@ class WebGraph(gym.Space[WebPage]):
             content_chunks = [PageContent(header=None, content=content)]
         else:
             content_chunks = chunk_by_pattern(url, content, self.chunk_pattern, self.chunk_char_limit)
-            # TODO: move this into wikipedia-specific class
-            content_chunks = [
-                x for x in content_chunks if x.header not in ["References", "Footnotes", "See_also", "External_links"]
-            ]
+            content_chunks = [x for x in content_chunks if x.header not in self.ignore_headers]
+            if self.first_chunk_only:
+                content_chunks = [content_chunks[0]]
 
         _url_parsed = urllib.parse.urlparse(url)
         page = WebPage(
@@ -239,6 +237,8 @@ class WikipediaGraph(WebGraph):
                 {"class": "metadata"},
                 {"id": "contentSub"},
             ],
+            ignore_headers=["References", "Bibliography", "External_links", "Footnotes", "See_also"],
+            first_chunk_only=True,
             **kwargs,
         )
 

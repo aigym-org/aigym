@@ -2,7 +2,6 @@
 
 import functools
 
-import tiktoken
 import torch
 from rich import print as rprint
 from transformers import AutoModelForCausalLM, AutoTokenizer, Pipeline, pipeline
@@ -14,8 +13,6 @@ from aigym.types import RolloutBatch
 
 
 def main():
-    enc = tiktoken.get_encoding("cl100k_base")
-
     def load_pipeline(model_id: str) -> Pipeline:
         return pipeline(
             "text-generation",
@@ -43,8 +40,6 @@ def main():
     model_pipeline = load_pipeline("google/gemma-3-4b-it")
     agent = Agent(
         policy=functools.partial(policy, model_pipeline),
-        token_encoder=enc,
-        url_boundaries=["https://en.wikipedia.org"],
         stream=False,
     )
 

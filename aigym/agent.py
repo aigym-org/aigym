@@ -27,13 +27,9 @@ class Agent:
     def __init__(
         self,
         policy: Callable[[str], Generator[str, None, None] | types.RolloutBatch],
-        token_encoder: tiktoken.Encoding,
-        url_boundaries: list[str] | None = None,
         stream: bool = True,
     ):
         self.policy = policy
-        self.token_encoder = token_encoder
-        self.url_boundaries = url_boundaries
         self.session = httpx.Client()
         self.stream = stream
 
@@ -49,8 +45,7 @@ class Agent:
         self,
         observation: types.Observation,
     ) -> types.ActionBatch:
-        prompt = self.get_prompt(observation)
-        batch = self.policy(prompt)
+        batch = self.policy(observation.prompt)
         actions = []
         for completion in batch.completions:
             error_type = None
@@ -95,11 +90,8 @@ class Agent:
         self,
         observation: types.Observation,
     ) -> types.Action:
-        prompt = self.get_prompt(observation)
-        prompt_token_length = len(self.token_encoder.encode(prompt))
-        rprint(Panel.fit(f"Prompt token length: {prompt_token_length}", border_style="violet"))
 
-        stream = self.policy(prompt=prompt)
+        stream = self.policy(observation.prompt)
 
         rprint(Panel.fit("Action stream", border_style="violet"))
         completion = ""
@@ -136,14 +128,6 @@ class Agent:
                 error_type=types.ErrorType(type=exc.__class__.__name__, message=str(exc)),
             )
 
-    def get_prompt(self, observation: types.Observation) -> str:
-        return prompts.WIKIPEDEA_ACTION_TEMPLATE.format(
-            observation=observation.context,
-            current_url=observation.url,
-            target_url=observation.target_url,
-            url_boundaries=", ".join(self.url_boundaries) if self.url_boundaries else "NONE",
-        )
-
     def parse_completion(
         self, completion: str, observation: types.Observation
     ) -> tuple[dict, str, str, types.ParseType]:
@@ -179,13 +163,13 @@ class Agent:
 
         _url = urllib.parse.urlparse(observation.url)
 
-        if self.url_boundaries is not None:
+        if observation.url_boundaries is not None:
             _url_boundary_netlocs = frozenset(
-                [urllib.parse.urlparse(url_boundary).netloc for url_boundary in self.url_boundaries]
+                [urllib.parse.urlparse(url_boundary).netloc for url_boundary in observation.url_boundaries]
             )
             if _url.netloc not in _url_boundary_netlocs:
                 raise InvalidActionError(
-                    f"url {action['url']} is not in the url boundaries {self.url_boundaries}. action: {action}"
+                    f"url {action['url']} is not in the url boundaries {observation.url_boundaries}. action: {action}"
                 )
         # make sure url is a valid url
         if not isinstance(action["url"], str):

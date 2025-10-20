@@ -4,7 +4,6 @@ import functools
 from threading import Thread
 from typing import Generator
 
-import tiktoken
 import torch
 from rich import print as rprint
 from transformers import AutoModelForCausalLM, AutoTokenizer, Pipeline, TextIteratorStreamer, pipeline
@@ -16,8 +15,6 @@ from aigym.env import WikipediaGymEnv
 
 
 def main():
-    enc = tiktoken.get_encoding("cl100k_base")
-
     def load_pipeline(model_id: str) -> Pipeline:
         return pipeline(
             "text-generation",
@@ -66,11 +63,7 @@ def main():
             yield chunk
 
     pl = load_pipeline("google/gemma-3-4b-it")
-    agent = Agent(
-        policy=functools.partial(policy, pl),
-        token_encoder=enc,
-        url_boundaries=["https://en.wikipedia.org"],
-    )
+    agent = Agent(policy=functools.partial(policy, pl))
 
     n_hops = 2
     n_tries_per_hop = 5
