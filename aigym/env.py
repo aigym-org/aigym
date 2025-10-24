@@ -201,11 +201,12 @@ class Env(gym.Env):
 
     def _current_page_is_target(self):
         _current_url = urllib.parse.urlparse(self._state.current_web_page.url)
+        _resolved_current_url = urllib.parse.urlparse(str(self.graph.get_page(_current_url.geturl()).url))
         _target_url = urllib.parse.urlparse(self.target_url)
         _resolved_target_url = urllib.parse.urlparse(self.resolved_target_url)
         return (
-            self._is_target_page(_current_url, _target_url)
-            or self._is_target_page(_current_url, _resolved_target_url)
+            self._is_target_page(_resolved_current_url, _target_url)
+            or self._is_target_page(_resolved_current_url, _resolved_target_url)
         )
 
     def step(self, action: Action) -> tuple[Observation, float, bool, bool, dict]:
@@ -313,7 +314,7 @@ class WikipediaGymEnv(Env):
         wikipedia_graph: WikipediaGraph | None = None,
         prompt_template: str | None = None,
         chunk_pattern: str | None = None,
-        chunk_char_limit: int | None = 5000,
+        chunk_char_limit: int | None = 10_000,
         url_boundaries: list[str] | None = None,
         **kwargs,
     ):

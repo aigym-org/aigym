@@ -11,13 +11,13 @@ from aigym.env import WikipediaGymEnv
 
 
 def main():
+
     def policy(prompt: str) -> Generator[str, None, None]:
         for chunk in ollama.generate(
             model="gemma3:4b",
             prompt=prompt,
             stream=True,
-            options={
-                "temperature": 1.25,
+            options={"temperature": 1.25,
                 "top_k": 64,
                 "top_p": 0.95,
             },

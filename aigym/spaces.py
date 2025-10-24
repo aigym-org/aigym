@@ -184,14 +184,27 @@ class WebGraph(gym.Space[WebPage]):
             content = BeautifulSoup("".join([str(c) for c in content]), "html.parser")
         return content
 
+    @staticmethod
+    def get_resolved_url(content: str) -> str | None:
+        # Check if it's a redirect page
+        soup = BeautifulSoup(content, "html.parser")
+        redirect_link = soup.find('link', {'rel': 'canonical'})
+
+        if redirect_link and redirect_link.get('href'):
+            return redirect_link['href']
+        return None
+
     @functools.lru_cache
     def get_page(
         self,
         url: str,
     ) -> WebPage:
         response = self.session.get(url, follow_redirects=True)
+        resolved_url = self.get_resolved_url(response.content)
+        content = self.get_soup(response.url)
+        if resolved_url is None:
+            resolved_url = url
 
-        content = self.get_soup(url)
         if self.text_format == "markdown":
             content = re.sub(r"\n+", "\n", md(str(content)))
         else:
@@ -200,14 +213,14 @@ class WebGraph(gym.Space[WebPage]):
         if self.chunk_pattern is None:
             content_chunks = [PageContent(header=None, content=content)]
         else:
-            content_chunks = chunk_by_pattern(url, content, self.chunk_pattern, self.chunk_char_limit)
+            content_chunks = chunk_by_pattern(resolved_url, content, self.chunk_pattern, self.chunk_char_limit)
             content_chunks = [x for x in content_chunks if x.header not in self.ignore_headers]
             if self.first_chunk_only:
                 content_chunks = [content_chunks[0]]
 
-        _url_parsed = urllib.parse.urlparse(url)
+        _url_parsed = urllib.parse.urlparse(resolved_url)
         page = WebPage(
-            url=str(response.url),
+            url=str(resolved_url),
             content_chunks=content_chunks,
             content_chunk_index=0,
         )
@@ -236,6 +249,7 @@ class WikipediaGraph(WebGraph):
                 {"class": "catlinks"},
                 {"class": "metadata"},
                 {"id": "contentSub"},
+                {"table": "sidebar"},
             ],
             ignore_headers=["References", "Bibliography", "External_links", "Footnotes", "See_also"],
             first_chunk_only=True,

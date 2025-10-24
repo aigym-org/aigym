@@ -196,7 +196,7 @@ def approx_kl_divergence(
 
 
 def compute_log_probs(
-    model: Qwen2ForCausalLM,
+    model: PreTrainedModel,
     sequence_ids: torch.Tensor,
     attention_mask: torch.Tensor,
 ):
@@ -220,22 +220,16 @@ def compute_log_probs(
 
 
 def reward_function(action: Action, observation: Observation) -> float:
-    """Reward function.
-
-    - no/invalid action = 0
-    - is next url 0.5
-    - is target url 1.0
-    """
-    reward = 0
-    if action.action is None:
-        return reward
-
-    if action.url == observation.target_url:
-        reward += 1.0
+    if action.error_type and action.error_type.type == "url_not_in_context":
+        return -1.0
+    elif action.error_type:
+        return -0.5
     elif action.url == observation.next_url:
-        reward += 0.5
-
-    return reward
+        return 0.5
+    elif action.url == observation.target_url:
+        return 1.0
+    else:
+        return 0.0
 
 
 @torch.no_grad()
@@ -324,7 +318,7 @@ def reconstruct_sequence_ids(
     if action_batch.log_probs is not None:
         log_probs_old = action_batch.log_probs.detach()
 
-    sequence_ids = action_batch.sequence_ids.detach()
+    sequence_ids = action_batch.sequence_ids
 
     # action mask makes sure end of sequence tokens are masked out of the
     # loss calculation
@@ -563,14 +557,7 @@ def main(training_args: TrainingArgs, logger: TrainingLogger | None = None):
     total_cumulative_reward = 0
     console = Console(highlight=False)
     global_step = 0
-    # observation, info = env.reset()
-    observation, info = env.reset_manual(
-        [
-            "https://en.wikipedia.org/wiki/Mammal",
-            "https://en.wikipedia.org/wiki/Arboreal_locomotion",
-            "https://en.wikipedia.org/wiki/Tree",
-        ]
-    )
+    observation, info = env.reset()
     initial_travel_path = env.travel_path
     for episode in range(1, training_args.n_episodes + 1):
         console.rule(f"▶️ Episode {episode}")

@@ -119,11 +119,13 @@ PYTHONPATH=. python examples/agent_training_flyte.py \
     --model_id google/gemma-3-12b-it \
     --start_url_anchors '["https://en.wikipedia.org/wiki/Mammal"]' \
     --enable_gradient_checkpointing \
-    --n_episodes 100 \
-    --lr 1e-8 \
+    --n_episodes 1000 \
+    --lr 1e-3 \
+    --max_grad_norm 4.0 \
     --lora_r 64 \
     --n_hops 2 \
     --n_tries_per_hop 2 \
+    --static_env \
     --rollout_min_new_tokens 256 \
     --rollout_max_new_tokens 512 \
     --group_size 4 \

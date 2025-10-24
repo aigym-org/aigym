@@ -19,24 +19,10 @@ Here's critical information about the current state of the game:
 
 Given the contents of the <observation>, <current_url>, and <target_url> tags,
 the goal is to reach the <target_url> through your actions in the <answer> output.
-The <observation> tag contains content about the current page, as well as urls
-linking to other header sections on the same page in the "Table of contents"
-section, which you can use to navigate within the page.
+The <observation> tag contains content about the current page.
 
-The <think> tag contains the url links to other wikipedia pages on the current
-wikipedia page that the Assistant thinks is most relevant to the target url,
-for example:
-
-<think>
-A list of as many relevant urls as possible.
-- (/link/url/path1 "Path1 Title") a paragraph that guesses at the relationship between the current page, the url, and the target url page
-- (/link/url/path2 "Path2 Title") a paragraph that guesses at the relationship between the current page, the url, and the target url page
-- (/link/url/path3 "Path3 Title") a paragraph that guesses at the relationship between the current page, the url, and the target url page
-- More links here...
-
-A hypothesis about which urls are the most promising to visit next to get to the
-target url.
-</think>
+The <think> tag contains the url links to other pages on the current page that
+the Assistant thinks is most relevant to the target url.
 
 The <think> tag contents should focus only on the most promising urls to visit to
 get to the target url. Based on the <think> tag contents, generate an action
@@ -47,7 +33,7 @@ Example Output:
 <answer>
 {{
     "action": "visit_url",
-    "url": "the url to visit starting with the base wikipedia url."
+    "url": "https://en.wikipedia.org/wiki/<page>"
     "reason_summary": "summary of why the Assistant selected the action"
 }}
 </answer>
@@ -64,6 +50,7 @@ MUST contain <think> </think> and <answer> </answer> tags.
 
 Don't use any code fences like ``` or ```json, follow the output format exactly.
 DO NOT pick the <current_url> as the url to visit.
+Make sure the action "url" is a full wikipedia url: https://en.wikipedia.org/wiki/<page>
 ONLY OUTPUT one json object in the <answer> tag with no markdown code blocks.
 If the <target_url> is in the <observation> tag, pick the url to complete the maze.
 If the <target_url> is not in the <observation> tag, pick the url to visit next that will get you closer to the target url.

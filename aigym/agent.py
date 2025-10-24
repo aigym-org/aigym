@@ -49,19 +49,24 @@ class Agent:
         actions = []
         for completion in batch.completions:
             error_type = None
+            err_msg = ""
             try:
                 action_dict, completion, reasoning_trace, parse_type = self.parse_completion(completion, observation)
             except (json.JSONDecodeError, InvalidActionError) as exc:
                 action_dict = None
-                error_type = types.ErrorType(type=exc.__class__.__name__, message=str(exc))
+                err_msg = str(exc)
+                if err_msg.startswith("url is not in the context"):
+                    error_type = "url_not_in_context"
+                else:
+                    error_type = "no_action_dict"
 
             if action_dict is None:
                 action = types.Action(
                     completion=completion,
                     parse_type="invalid",
                     error_type=types.ErrorType(
-                        type="no_action_dict",
-                        message="No action found",
+                        type=error_type,
+                        message=err_msg,
                     ),
                 )
             else:
@@ -103,14 +108,20 @@ class Agent:
         rprint(Panel.fit("End attempt", border_style="purple"))
         try:
             action_dict, completion, reasoning_trace, parse_type = self.parse_completion(completion, observation)
-        except (json.JSONDecodeError, InvalidActionError):
+            err_msg = ""
+        except (json.JSONDecodeError, InvalidActionError) as exc:
             action_dict = None
+            err_msg = str(exc)
+            if err_msg.startswith("url is not in the context"):
+                error_type = "url_not_in_context"
+            else:
+                error_type = "no_action"
 
         if action_dict is None:
             return types.Action(
                 completion=completion,
                 parse_type="invalid",
-                error_type=types.ErrorType(type="no_action", message="no action found"),
+                error_type=types.ErrorType(type=error_type, message=err_msg),
             )
 
         try:
@@ -159,7 +170,7 @@ class Agent:
             action["url"] = None
 
         if action.get("action") == "visit_url" and ("url" not in action or action["url"] is None):
-            raise InvalidActionError(f"url is required for visit_url action, found None. action: {action}")
+            raise InvalidActionError(f"url is required for visit_url action, found None.")
 
         _url = urllib.parse.urlparse(observation.url)
 
@@ -169,18 +180,18 @@ class Agent:
             )
             if _url.netloc not in _url_boundary_netlocs:
                 raise InvalidActionError(
-                    f"url {action['url']} is not in the url boundaries {observation.url_boundaries}. action: {action}"
+                    f"url is not in the url boundaries {observation.url_boundaries}."
                 )
         # make sure url is a valid url
         if not isinstance(action["url"], str):
-            raise InvalidActionError(f"url is not a string. action: {action}")
+            raise InvalidActionError(f"url is not a string.")
 
         if action["url"] and not action["url"].startswith("http"):
             action["url"] = urllib.parse.urljoin(f"{_url.scheme}://{_url.netloc}", action["url"])
 
         try:
             if action["url"] and self._url_not_in_context(action["url"], observation.context):
-                raise InvalidActionError(f"url {action['url']} is not in the context. action: {action}")
+                raise InvalidActionError(f"url is not in the context.")
         except Exception as exc:
             raise InvalidActionError(str(exc)) from exc
 
