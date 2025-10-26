@@ -1,15 +1,15 @@
-# 🤖 AI Gym
+<div align="center">
+    <img src="./static/aigym-logo.png" alt="aigym logo" width="200">
+    <h1>aigym</h1>
+    <p>Self-supervised reinforcement learning environments for LLM fine-tuning</p>
+</div>
 
-*Reinforcement learning environments for AI fine-tuning*
+---
 
-`aigym` is a library that provides a suite of reinforcement learning (RL)
-environments primarily for the purpose of fine-tuning pre-trained models - namely
-language models - for various reasoning tasks.
+`aigym` is a library that provides a suite of novel reinforcement learning (RL) environments
+for the purpose of fine-tuning pre-trained language models for various reasoning tasks.
 
-Built on top of the [gymnasium](https://gymnasium.farama.org/) API, the objective
-of this project is to expose a light-weight and extensible environments
-to fine-tune language models with techniques like [PPO](https://arxiv.org/abs/1707.06347)
-and [GRPO](https://arxiv.org/abs/2402.03300).
+Built on top of the [gymnasium](https://gymnasium.farama.org/) API, the objective of this project is to expose a light-weight and extensible environments to fine-tune language models with techniques like [PPO](https://arxiv.org/abs/1707.06347) and [GRPO](https://arxiv.org/abs/2402.03300).
 
 It is designed to complement training frameworks like [trl](https://huggingface.co/docs/trl/en/index),
 [transformers](https://huggingface.co/docs/transformers/en/index), [pytorch](https://pytorch.org/),
@@ -56,11 +56,13 @@ Install `ollama` to run a local model: https://ollama.com/download
 The `examples` directory contains examples on how to use the `aigym` environments.
 Run an ollama-based agent on the Wikipedia maze environment:
 
+### Basic example
+
 ```bash
 python examples/ollama_agent.py
 ```
 
-### Agent training on Flyte
+### Training on Flyte
 
 Install flyte:
 
@@ -81,21 +83,22 @@ flyte create config \
 
 This will create a `config.yaml` file in the current directory.
 
+<details>
+<summary>Basic example:</summary>
+
+This is the easiest difficulty setting that goes 1 hop away from the start url.
+
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
-    --model_id google/gemma-3-12b-it \
-    --enable_gradient_checkpointing \
-    --n_episodes 100 \
     --n_hops 1 \
-    --n_tries_per_hop 5 \
-    --rollout_min_new_tokens 256 \
-    --rollout_max_new_tokens 1024 \
-    --group_size 4 \
-    --wandb_project aigym-agent-training \
-    --attn_implementation eager
+    --model_id google/gemma-3-12b-it \
+    --enable_gradient_checkpointing
 ```
+</details>
 
-Example that goes 5 hops away:
+
+<details>
+<summary>Increased difficulty setting: five hops away</summary>
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
@@ -104,15 +107,17 @@ PYTHONPATH=. python examples/agent_training_flyte.py \
     --n_episodes 100 \
     --lora_r 64 \
     --n_hops 5 \
-    --n_tries_per_hop 2 \
+    --n_tries_per_hop 4 \
     --rollout_min_new_tokens 256 \
     --rollout_max_new_tokens 512 \
     --group_size 4 \
     --wandb_project aigym-agent-training \
     --attn_implementation eager
 ```
+</details>
 
-Example that anchors the start url to the "Mammal" page:
+<details>
+<summary>Anchor the start url to the "Mammal" page</summary>
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte.py \
@@ -132,8 +137,11 @@ PYTHONPATH=. python examples/agent_training_flyte.py \
     --wandb_project aigym-agent-training \
     --attn_implementation eager
 ```
+</details>
 
-Run a sweep with different number of hops:
+
+<details>
+<summary>Sweep with different number of hops</summary>
 
 ```bash
 PYTHONPATH=. python examples/agent_training_flyte_sweep.py \
@@ -148,3 +156,4 @@ PYTHONPATH=. python examples/agent_training_flyte_sweep.py \
     --wandb_project aigym-agent-training \
     --attn_implementation eager
 ```
+</details>

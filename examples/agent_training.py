@@ -81,7 +81,7 @@ from aigym.types import Action, ActionBatch, Observation, RolloutBatch
 @dataclass
 class TrainingArgs:
     experiment_name: str | None = None
-    n_episodes: int = 10
+    n_episodes: int = 30
     model_id: str = "google/gemma-3-1b-it"
     model_save_dir: str = "./output_model"
     ref_model_id: str | None = None
@@ -102,15 +102,15 @@ class TrainingArgs:
     enable_gradient_checkpointing: bool = False
     attn_implementation: str = "eager"
     n_hops: int = 1
-    n_tries_per_hop: int = 10
-    rollout_min_new_tokens: int = 64
-    rollout_max_new_tokens: int = 128
+    n_tries_per_hop: int = 5
+    rollout_min_new_tokens: int = 256
+    rollout_max_new_tokens: int = 1024
     rollout_temperature: float = 1.25
     rollout_top_k: int = 64
     rollout_top_p: float = 0.95
     rollout_repetition_penalty: float = 1.0
     rollout_no_repeat_ngram_size: int = 0
-    wandb_project: str = None
+    wandb_project: str = "aigym-agent-training"
 
 
 class TrainingLogger(Protocol):
