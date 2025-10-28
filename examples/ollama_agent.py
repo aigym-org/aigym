@@ -3,7 +3,6 @@
 from typing import Generator
 
 import ollama
-from rich import print as rprint
 
 import aigym.pprint as pprint
 from aigym.agent import Agent
@@ -12,6 +11,7 @@ from aigym.env import WikipediaGymEnv
 
 def main():
 
+    # define a policy function for the agent using Ollama
     def policy(prompt: str) -> Generator[str, None, None]:
         for chunk in ollama.generate(
             model="gemma3:4b",
@@ -24,38 +24,44 @@ def main():
         ):
             yield chunk.response
 
-    agent = Agent(
-        policy=policy,
-        stream=True,
-    )
+    # initialize the agent with the policy function in streaming mode
+    agent = Agent(policy=policy, stream=True)
 
-    n_hops = 2
-    n_tries_per_hop = 5
-    n_tries = n_hops * n_tries_per_hop
-    env = WikipediaGymEnv(n_hops=n_hops)
+    # initialize the environment and reset it to create a new travel path
+    env = WikipediaGymEnv(n_hops=2)
+
+    # this will create a travel path between two pages that are two hops away
     observation, info = env.reset()
     succeeded = False
 
     pprint.print_travel_path(env.travel_path)
-    for step in range(1, n_tries + 1):
+
+    # allow the agent to take 10 steps to try to find the target page
+    for step in range(10):
         pprint.print_observation(observation)
         pprint.print_context(observation)
         action = agent.act(observation)
+
         if action.action is None:
-            rprint(f"No action taken at step {step}")
+            print(f"No valid action taken at step {step}")
             continue
+
         pprint.print_action(action)
+
+        # take a step in the environment
         observation, reward, terminated, truncated, info = env.step(action)
+
+        # break early if the episode is terminated
         if terminated or truncated:
             succeeded = True
-            rprint(f"Episode terminated or truncated at step {step}")
+            print(f"Episode terminated or truncated at step {step}")
             break
 
-    rprint(f"Finished after {step} tries")
+    print(f"Finished after {step} tries")
     if succeeded:
-        rprint("✅ Target found")
+        print("✅ Target found")
     else:
-        rprint("❌ Target not found")
+        print("❌ Target not found")
     env.close()
 
 

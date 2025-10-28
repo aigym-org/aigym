@@ -85,7 +85,7 @@ class Env(gym.Env):
         map[self.travel_path[-1]] = None
         return map
 
-    def _initialize_target_url(self, start_url: str, n_hops: int, n_retries: int = 30) -> tuple[str, list[str]]:
+    def _initialize_target_url(self, start_url: str, n_hops: int, n_retries: int = 100) -> tuple[str, list[str]]:
         _start_page = self.graph.get_page(
             start_url,
         ).page_chunks[0]
@@ -102,7 +102,13 @@ class Env(gym.Env):
                     )
                     travel_path.append(next_page.url)
                     _page = next_page
-                break
+
+                if len(travel_path) != len(set(travel_path)):
+                    # try again if there are duplicate pages in the travel path
+                    continue
+                else:
+                    break
+
             except NoPathsFoundError:
                 if retry < n_retries - 1:
                     travel_path = []
@@ -164,7 +170,7 @@ class Env(gym.Env):
         start_url: str | None = None,
         seed: int | None = None,
         options: dict | None = None,
-        n_retries: int = 30,
+        n_retries: int = 100,
     ) -> tuple[Observation, dict]:
         """Reset the environment."""
         if start_url is not None:
@@ -174,9 +180,11 @@ class Env(gym.Env):
         else:
             self.start_url = self.random_start()
 
+        # NOTE: look into removing this retry loop since there already is one
+        # in the _initialize_target_url function
         for retry in range(n_retries):
             try:
-                self.target_url, self.travel_path = self._initialize_target_url(self.start_url, self.n_hops)
+                self.target_url, self.travel_path = self._initialize_target_url(self.start_url, self.n_hops, n_retries)
                 break
             except NoPathsFoundError as exc:
                 if retry < n_retries - 1:
